@@ -1,0 +1,18 @@
+# Runtime data — реальная база преподавателя, не для репозитория
+data.json
+data.json.bak
+
+# Runtime-папки с копиями настоящих учебных файлов
+/Материалы/
+/Корзина/
+
+# Инсталляторы Python — большие бинарники, не исходный код
+/python-3.8.10-installers/
+
+# Python
+__pycache__/
+*.pyc
+
+# Мусор Windows-проводника
+Thumbs.db
+desktop.ini
