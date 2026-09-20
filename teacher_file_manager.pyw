@@ -129,6 +129,16 @@ def _is_managed_copy(path):
     return os.path.normcase(os.path.abspath(path)).startswith(materials)
 
 
+def format_size(num_bytes):
+    """Человекочитаемый размер файла: 512 Б, 3.4 КБ, 12.0 МБ, 1.1 ГБ."""
+    size = float(num_bytes)
+    for unit in ("Б", "КБ", "МБ"):
+        if size < 1024:
+            return f"{int(size)} {unit}" if unit == "Б" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} ГБ"
+
+
 def unique_dest_path(target_dir, filename):
     """Возвращает путь в target_dir с таким же именем файла, либо, если
     файл с таким именем уже есть, добавляет суффикс " (2)", " (3)" и т.д."""
@@ -216,6 +226,8 @@ class TeacherFileManager(tk.Tk):
         self._file_display_indices = []
         self._undo_snapshot = None
         self._undo_trash_moves = []
+        self._trash_count = 0
+        self._trash_size = 0
 
         self.font_size = self.data["settings"].get("font_size", DEFAULT_FONT_SIZE)
         if not (MIN_FONT_SIZE <= self.font_size <= MAX_FONT_SIZE):
@@ -254,6 +266,7 @@ class TeacherFileManager(tk.Tk):
             self._startup_scan_message = "\n".join(lines)
         else:
             self._startup_scan_message = None
+        self._compute_trash_stats()
         self._refresh_subjects()
         self._fit_initial_size_to_screen()
         self._apply_dynamic_min_size()
@@ -617,6 +630,7 @@ class TeacherFileManager(tk.Tk):
                 restore_errors.append(os.path.basename(trashed_path))
         self._undo_trash_moves = []
         save_data(self.data)
+        self._compute_trash_stats()
         self._refresh_subjects()
         self._update_undo_button()
         if restore_errors:
@@ -630,13 +644,36 @@ class TeacherFileManager(tk.Tk):
         self.subject_filter_entry.focus_set()
         return "break"
 
+    def _compute_trash_stats(self):
+        """Пересчитывает (файлов, суммарный размер в байтах) в "Корзина".
+        Вызывается только там, где туда что-то реально попадает или уходит
+        (удаление/отмена) — не на каждое обновление списков, иначе это был
+        бы обход всей "Корзина" на каждое нажатие клавиши в поиске."""
+        count = 0
+        total_size = 0
+        if os.path.isdir(TRASH_PATH):
+            for root, _dirs, files in os.walk(TRASH_PATH):
+                for name in files:
+                    count += 1
+                    try:
+                        total_size += os.path.getsize(os.path.join(root, name))
+                    except OSError:
+                        pass
+        self._trash_count = count
+        self._trash_size = total_size
+
     def _update_status(self):
         subjects = self.data["subjects"]
         lessons_count = sum(len(s["lessons"]) for s in subjects)
         files_count = sum(len(l["files"]) for s in subjects for l in s["lessons"])
+        trash_part = ""
+        if self._trash_count:
+            trash_part = (
+                f"  •  в «Корзина»: {self._trash_count} ({format_size(self._trash_size)})"
+            )
         self.status_var.set(
             f"Дисциплин: {len(subjects)}  •  занятий: {lessons_count}  •  "
-            f"файлов: {files_count}   |   Данные хранятся в: {DATA_PATH}"
+            f"файлов: {files_count}{trash_part}   |   Данные хранятся в: {DATA_PATH}"
         )
 
     # ------------------------------------------------------ Контекстное меню --
@@ -871,6 +908,7 @@ class TeacherFileManager(tk.Tk):
             pass
         del self.data["subjects"][self.selected_subject_idx]
         save_data(self.data)
+        self._compute_trash_stats()
         self._update_undo_button()
         self._refresh_subjects()
         if trash_errors:
@@ -1022,6 +1060,7 @@ class TeacherFileManager(tk.Tk):
         self._undo_trash_moves, trash_errors = self._move_lesson_files_to_trash(subject, lesson)
         del subject["lessons"][self.selected_lesson_idx]
         save_data(self.data)
+        self._compute_trash_stats()
         self._update_undo_button()
         self._refresh_lessons()
         if trash_errors:
@@ -1386,6 +1425,7 @@ class TeacherFileManager(tk.Tk):
             del lesson["files"][idx]
         self._undo_trash_moves = trash_moves
         save_data(self.data)
+        self._compute_trash_stats()
         self._update_undo_button()
         self._refresh_files()
         if errors:
