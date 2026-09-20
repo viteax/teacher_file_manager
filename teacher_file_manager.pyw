@@ -214,7 +214,7 @@ class TeacherFileManager(tk.Tk):
 
         self.title(APP_TITLE)
         try:
-            self.iconbitmap(os.path.join(get_app_dir(), ASSETS_DIRNAME, 'vuc_tsu.ico'))
+            self.iconbitmap(os.path.join(get_app_dir(), ASSETS_DIRNAME, "vuc_tsu.ico"))
         except tk.TclError:
             pass
 
@@ -240,20 +240,29 @@ class TeacherFileManager(tk.Tk):
         if self.lesson_sort_mode not in ("custom", "alpha"):
             self.lesson_sort_mode = "custom"
         self.ui_font = tkfont.Font(family="Segoe UI", size=self.font_size)
-        self.ui_font_bold = tkfont.Font(family="Segoe UI", size=self.font_size, weight="bold")
+        self.ui_font_bold = tkfont.Font(
+            family="Segoe UI", size=self.font_size, weight="bold"
+        )
         # Заголовок и девиз — фиксированного размера, не зависят от A-/A+.
-        self.title_font = tkfont.Font(family="Segoe UI", size=TITLE_FONT_SIZE, weight="bold")
-        self.motto_font = tkfont.Font(family="Segoe UI", size=MOTTO_FONT_SIZE, weight="bold")
+        self.title_font = tkfont.Font(
+            family="Segoe UI", size=TITLE_FONT_SIZE, weight="bold"
+        )
+        self.motto_font = tkfont.Font(
+            family="Segoe UI", size=MOTTO_FONT_SIZE, weight="bold"
+        )
 
         self._build_ui()
         new_subjects, new_lessons = self._discover_new_subjects_and_lessons()
         added_total, added_details = self._scan_all_lessons_for_new_files()
         if new_subjects or new_lessons or added_total:
-            save_data(self.data)  # находки автоскана не должны попадать в историю отмены
+            save_data(
+                self.data
+            )  # находки автоскана не должны попадать в историю отмены
             lines = []
             if new_subjects:
                 lines.append(
-                    "Новые дисциплины из папок: " + ", ".join(f"«{n}»" for n in new_subjects)
+                    "Новые дисциплины из папок: "
+                    + ", ".join(f"«{n}»" for n in new_subjects)
                 )
             if new_lessons:
                 lines.append(
@@ -261,7 +270,9 @@ class TeacherFileManager(tk.Tk):
                     + ", ".join(f"«{s}» → «{l}»" for s, l in new_lessons)
                 )
             if added_total:
-                lines.append(f"Найдено и добавлено новых файлов из папок: {added_total}.")
+                lines.append(
+                    f"Найдено и добавлено новых файлов из папок: {added_total}."
+                )
                 for subj_name, lesson_name, count in added_details:
                     lines.append(f"«{subj_name}» → «{lesson_name}»: {count}")
             self._startup_scan_message = "\n".join(lines)
@@ -279,7 +290,9 @@ class TeacherFileManager(tk.Tk):
         if is_first_run:
             self.after(100, self._show_welcome_message)
         elif self._startup_scan_message:
-            self.after(100, lambda: messagebox.showinfo(APP_TITLE, self._startup_scan_message))
+            self.after(
+                100, lambda: messagebox.showinfo(APP_TITLE, self._startup_scan_message)
+            )
 
     def _show_welcome_message(self):
         messagebox.showinfo(
@@ -361,9 +374,9 @@ class TeacherFileManager(tk.Tk):
 
         title_box = ttk.Frame(toolbar)
         title_box.pack(side=tk.LEFT)
-        ttk.Label(title_box, text="Преподаватель кафедры связи", font=self.title_font).pack(
-            anchor="w"
-        )
+        ttk.Label(
+            title_box, text="Преподаватель кафедры связи", font=self.title_font
+        ).pack(anchor="w")
         ttk.Label(title_box, text="Щерба Антон Иванович", font=self.title_font).pack(
             anchor="w"
         )
@@ -397,9 +410,9 @@ class TeacherFileManager(tk.Tk):
         ttk.Button(
             tools_bar, text="Проверить файлы", command=self._check_all_files
         ).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(
-            tools_bar, text="Экспорт плана...", command=self._export_plan
-        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(tools_bar, text="Экспорт плана...", command=self._export_plan).pack(
+            side=tk.LEFT, padx=4
+        )
 
         main = ttk.Frame(self, padding=6)
         main.pack(fill=tk.BOTH, expand=True)
@@ -416,7 +429,9 @@ class TeacherFileManager(tk.Tk):
         self.subject_filter_var.trace_add("write", lambda *_a: self._refresh_subjects())
         subject_search_row = ttk.Frame(main)
         subject_search_row.grid(row=1, column=0, sticky="ew", padx=(0, 6), pady=(2, 2))
-        self.subject_filter_entry = ttk.Entry(subject_search_row, textvariable=self.subject_filter_var)
+        self.subject_filter_entry = ttk.Entry(
+            subject_search_row, textvariable=self.subject_filter_var
+        )
         self.subject_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.subject_list = tk.Listbox(
             main, exportselection=False, activestyle="dotbox", font=self.ui_font
@@ -432,9 +447,9 @@ class TeacherFileManager(tk.Tk):
         ttk.Button(subject_btns, text="Добавить", command=self._add_subject).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
-        ttk.Button(subject_btns, text="Переименовать", command=self._rename_subject).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
-        )
+        ttk.Button(
+            subject_btns, text="Переименовать", command=self._rename_subject
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(subject_btns, text="Удалить", command=self._delete_subject).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
@@ -447,7 +462,9 @@ class TeacherFileManager(tk.Tk):
         self.lesson_filter_var.trace_add("write", lambda *_a: self._refresh_lessons())
         lesson_search_row = ttk.Frame(main)
         lesson_search_row.grid(row=1, column=1, sticky="ew", padx=6, pady=(2, 2))
-        self.lesson_filter_entry = ttk.Entry(lesson_search_row, textvariable=self.lesson_filter_var)
+        self.lesson_filter_entry = ttk.Entry(
+            lesson_search_row, textvariable=self.lesson_filter_var
+        )
         self.lesson_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.lesson_sort_btn = ttk.Button(
             lesson_search_row, text="А-Я", width=6, command=self._toggle_lesson_sort
@@ -524,9 +541,7 @@ class TeacherFileManager(tk.Tk):
         self.status_var = tk.StringVar(value=f"Данные хранятся в: {DATA_PATH}")
         self.status_label = ttk.Label(status, textvariable=self.status_var)
         self.status_label.pack(side=tk.LEFT)
-        self.undo_btn = ttk.Button(
-            status, text="Отменить (Ctrl+Z)", command=self._undo
-        )
+        self.undo_btn = ttk.Button(status, text="Отменить (Ctrl+Z)", command=self._undo)
         self.undo_btn.pack(side=tk.RIGHT)
         self.undo_btn.state(["disabled"])
 
@@ -534,7 +549,9 @@ class TeacherFileManager(tk.Tk):
         self._apply_theme(self.theme_name)
 
     def _toggle_lesson_sort(self):
-        self.lesson_sort_mode = "alpha" if self.lesson_sort_mode == "custom" else "custom"
+        self.lesson_sort_mode = (
+            "alpha" if self.lesson_sort_mode == "custom" else "custom"
+        )
         self.data["settings"]["lesson_sort_mode"] = self.lesson_sort_mode
         save_data(self.data)
         self._update_lesson_sort_ui()
@@ -566,13 +583,18 @@ class TeacherFileManager(tk.Tk):
             style.theme_use("clam")
 
         style.configure("TFrame", background=c["bg"])
-        style.configure("TLabel", background=c["bg"], foreground=c["fg"], font=self.ui_font)
+        style.configure(
+            "TLabel", background=c["bg"], foreground=c["fg"], font=self.ui_font
+        )
         style.configure(
             "TButton", background=c["btn_bg"], foreground=c["fg"], font=self.ui_font
         )
         style.map("TButton", background=[("active", c["select_bg"])])
         style.configure(
-            "TEntry", fieldbackground=c["entry_bg"], foreground=c["fg"], font=self.ui_font
+            "TEntry",
+            fieldbackground=c["entry_bg"],
+            foreground=c["fg"],
+            font=self.ui_font,
         )
 
         self.configure(bg=c["bg"])
@@ -591,7 +613,9 @@ class TeacherFileManager(tk.Tk):
         self.missing_file_color = c["missing_fg"]
         self._refresh_files()  # перекрасить метку "[не найден]" под новую тему
 
-        self.theme_btn.configure(text="☀ Светлая" if theme_name == "dark" else "🌙 Тёмная")
+        self.theme_btn.configure(
+            text="☀ Светлая" if theme_name == "dark" else "🌙 Тёмная"
+        )
 
     # --------------------------------------------------------- Служебное --
     def _push_undo(self):
@@ -690,9 +714,7 @@ class TeacherFileManager(tk.Tk):
         files_count = sum(len(l["files"]) for s in subjects for l in s["lessons"])
         trash_part = ""
         if self._trash_count:
-            trash_part = (
-                f"  •  в «Корзина»: {self._trash_count} ({format_size(self._trash_size)})"
-            )
+            trash_part = f"  •  в «Корзина»: {self._trash_count} ({format_size(self._trash_size)})"
         self.status_var.set(
             f"Дисциплин: {len(subjects)}  •  занятий: {lessons_count}  •  "
             f"файлов: {files_count}{trash_part}   |   Данные хранятся в: {DATA_PATH}"
@@ -782,7 +804,9 @@ class TeacherFileManager(tk.Tk):
         menu.add_command(label="Добавить файл...", command=self._add_file)
         if idx is not None:
             menu.add_command(label="Открыть", command=self._open_selected_file)
-            menu.add_command(label="Показать в папке", command=self._reveal_selected_file)
+            menu.add_command(
+                label="Показать в папке", command=self._reveal_selected_file
+            )
             menu.add_separator()
             menu.add_command(label="Убрать", command=self._remove_file)
         self._popup_menu(menu, event)
@@ -858,7 +882,9 @@ class TeacherFileManager(tk.Tk):
         )
 
     def _add_subject(self):
-        name = simpledialog.askstring(APP_TITLE, "Название новой дисциплины:", parent=self)
+        name = simpledialog.askstring(
+            APP_TITLE, "Название новой дисциплины:", parent=self
+        )
         if not name:
             return
         name = name.strip()
@@ -1001,7 +1027,9 @@ class TeacherFileManager(tk.Tk):
             return
         name = name.strip()
         if self._lesson_name_exists(subject, name):
-            messagebox.showerror(APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине.")
+            messagebox.showerror(
+                APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине."
+            )
             return
         self._push_undo()
         subject["lessons"].append({"name": name, "files": []})
@@ -1032,8 +1060,12 @@ class TeacherFileManager(tk.Tk):
         if not name:
             return
         name = name.strip()
-        if self._lesson_name_exists(subject, name, exclude_idx=self.selected_lesson_idx):
-            messagebox.showerror(APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине.")
+        if self._lesson_name_exists(
+            subject, name, exclude_idx=self.selected_lesson_idx
+        ):
+            messagebox.showerror(
+                APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине."
+            )
             return
         old_dir = self._lesson_materials_dir(subject, lesson)
         step = self._push_undo()
@@ -1088,7 +1120,9 @@ class TeacherFileManager(tk.Tk):
         ):
             return
         step = self._push_undo()
-        step["trash_restores"], trash_errors = self._move_lesson_files_to_trash(subject, lesson)
+        step["trash_restores"], trash_errors = self._move_lesson_files_to_trash(
+            subject, lesson
+        )
         del subject["lessons"][self.selected_lesson_idx]
         save_data(self.data)
         self._compute_trash_stats()
@@ -1171,7 +1205,9 @@ class TeacherFileManager(tk.Tk):
                     return True
         return False
 
-    def _move_managed_file_to_trash(self, subject, lesson, path, excluded_lesson_ids=None):
+    def _move_managed_file_to_trash(
+        self, subject, lesson, path, excluded_lesson_ids=None
+    ):
         """Переносит path в Корзина/<дисциплина>/<занятие>, если это
         управляемая копия (см. _is_managed_copy), она реально есть на диске
         и больше нигде в базе не используется. Возвращает (статус, move),
@@ -1183,7 +1219,9 @@ class TeacherFileManager(tk.Tk):
             return "external", None
         if not os.path.isfile(path):
             return "missing", None
-        excluded = excluded_lesson_ids if excluded_lesson_ids is not None else {id(lesson)}
+        excluded = (
+            excluded_lesson_ids if excluded_lesson_ids is not None else {id(lesson)}
+        )
         if self._path_referenced_elsewhere(path, excluded):
             return "kept_shared", None
         target_dir = self._lesson_trash_dir(subject, lesson)
@@ -1200,7 +1238,9 @@ class TeacherFileManager(tk.Tk):
         что ещё нужны занятиям-дубликатам), и убирает опустевшую папку
         занятия из "Материалы". Возвращает (перенесённые (откуда, куда),
         имена файлов, которые перенести не удалось)."""
-        excluded = excluded_lesson_ids if excluded_lesson_ids is not None else {id(lesson)}
+        excluded = (
+            excluded_lesson_ids if excluded_lesson_ids is not None else {id(lesson)}
+        )
         moves = []
         errors = []
         for path in lesson["files"]:
@@ -1247,7 +1287,7 @@ class TeacherFileManager(tk.Tk):
         for subject in self.data["subjects"]:
             for lesson in subject["lessons"]:
                 lesson["files"] = [
-                    new_dir + p[len(old_dir):]
+                    new_dir + p[len(old_dir) :]
                     if os.path.normcase(p).startswith(old_dir_prefix)
                     else p
                     for p in lesson["files"]
@@ -1353,7 +1393,9 @@ class TeacherFileManager(tk.Tk):
         try:
             os.makedirs(target_dir, exist_ok=True)
         except OSError as e:
-            messagebox.showerror(APP_TITLE, f"Не удалось создать папку для файлов:\n{e}")
+            messagebox.showerror(
+                APP_TITLE, f"Не удалось создать папку для файлов:\n{e}"
+            )
             return
         # normcase: пути занятия уже известны заранее — если после копирования
         # dest совпадёт с одним из них, это не новый файл, а восстановление
@@ -1429,7 +1471,7 @@ class TeacherFileManager(tk.Tk):
         folder = os.path.dirname(path)
         if os.name == "nt" and os.path.exists(path):
             # Открыть проводник Windows с выделенным файлом
-            path = path.replace('/', '\\') # Требование винды
+            path = path.replace("/", "\\")  # Требование винды
             subprocess.Popen(f'explorer /select,"{path}"')
         elif os.path.isdir(folder):
             open_file_external(folder)
