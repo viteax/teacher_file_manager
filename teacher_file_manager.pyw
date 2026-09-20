@@ -1094,11 +1094,12 @@ class TeacherFileManager(tk.Tk):
         базах, сохранённых ещё когда существовала функция "Дублировать") —
         удаление одного из них не должно утаскивать файл в "Корзина", пока
         другой ещё им пользуется."""
+        target = os.path.normcase(path)
         for subject in self.data["subjects"]:
             for lesson in subject["lessons"]:
                 if id(lesson) in excluded_lesson_ids:
                     continue
-                if path in lesson["files"]:
+                if any(os.path.normcase(p) == target for p in lesson["files"]):
                     return True
         return False
 
@@ -1169,10 +1170,16 @@ class TeacherFileManager(tk.Tk):
                 f"файлами на диске:\n{e}\n\nПуть в проводнике остался старым.",
             )
             return
+        # Обязательно с разделителем на конце префикса: без него, скажем,
+        # переименование "Урок 1" задело бы и файлы "Урок 10" (совпадение
+        # по началу строки, но это разные папки).
+        old_dir_prefix = os.path.normcase(old_dir) + os.sep
         for subject in self.data["subjects"]:
             for lesson in subject["lessons"]:
                 lesson["files"] = [
-                    new_dir + p[len(old_dir):] if p.startswith(old_dir) else p
+                    new_dir + p[len(old_dir):]
+                    if os.path.normcase(p).startswith(old_dir_prefix)
+                    else p
                     for p in lesson["files"]
                 ]
 
@@ -1185,13 +1192,18 @@ class TeacherFileManager(tk.Tk):
         target_dir = self._lesson_materials_dir(subject, lesson)
         if not os.path.isdir(target_dir):
             return 0
-        known = set(lesson["files"])
+        # normcase: на Windows пути сравниваем без учёта регистра диска/
+        # разделителей — иначе "c:\..." и "C:\..." считаются разными
+        # строками, хотя это один и тот же файл (баг с задвоением файлов
+        # после перезапуска, если __file__ в другой раз резолвится с другим
+        # регистром буквы диска).
+        known = {os.path.normcase(p) for p in lesson["files"]}
         added = 0
         for name in sorted(os.listdir(target_dir)):
             if name.lower() in IGNORED_FILENAMES:
                 continue
             full = os.path.join(target_dir, name)
-            if os.path.isfile(full) and full not in known:
+            if os.path.isfile(full) and os.path.normcase(full) not in known:
                 lesson["files"].append(full)
                 added += 1
         return added
