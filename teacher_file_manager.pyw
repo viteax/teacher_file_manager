@@ -38,7 +38,6 @@
 Разработано: Viktor Iptyshev (aka Viteax, iptvik)
 """
 
-from collections import deque
 import copy
 import json
 import os
@@ -47,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import tkinter as tk
+from collections import deque
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 
