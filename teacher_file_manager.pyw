@@ -206,6 +206,7 @@ class TeacherFileManager(tk.Tk):
         except tk.TclError:
             pass
 
+        is_first_run = not os.path.exists(DATA_PATH)
         self.data = load_data()
         self.data.setdefault("settings", {})
         self.selected_subject_idx = None
@@ -261,8 +262,23 @@ class TeacherFileManager(tk.Tk):
         self.bind_all("<Control-Z>", self._undo)
         self.bind_all("<Control-f>", self._focus_search)
         self.bind_all("<Control-F>", self._focus_search)
-        if self._startup_scan_message:
+        if is_first_run:
+            self.after(100, self._show_welcome_message)
+        elif self._startup_scan_message:
             self.after(100, lambda: messagebox.showinfo(APP_TITLE, self._startup_scan_message))
+
+    def _show_welcome_message(self):
+        messagebox.showinfo(
+            APP_TITLE,
+            "Добро пожаловать!\n\n"
+            "Материалы здесь хранятся по схеме:\n"
+            "    Дисциплина  →  Тема/Занятие  →  Файлы\n\n"
+            "Начните с кнопки «Добавить» под левым списком — так создаётся "
+            "первая дисциплина. Внутри неё точно так же добавляются занятия, "
+            "а внутри занятия — сами файлы.\n\n"
+            "Если что-то будет непонятно — кнопка «Справка» на верхней "
+            "панели открывает подробную инструкцию.",
+        )
 
     def _on_close(self):
         """Сохраняем настройки (шрифт, тема) при любом закрытии окна —
@@ -361,6 +377,9 @@ class TeacherFileManager(tk.Tk):
 
         tools_bar = ttk.Frame(self, padding=(6, 0, 6, 6))
         tools_bar.pack(side=tk.TOP, fill=tk.X)
+        ttk.Button(tools_bar, text="Справка", command=self._open_help).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
         ttk.Button(
             tools_bar, text="Проверить файлы", command=self._check_all_files
         ).pack(side=tk.LEFT, padx=(0, 4))
@@ -392,6 +411,7 @@ class TeacherFileManager(tk.Tk):
         self.subject_list.bind("<<ListboxSelect>>", self._on_select_subject)
         self.subject_list.bind("<Delete>", lambda e: self._delete_subject())
         self.subject_list.bind("<Button-3>", self._on_subject_right_click)
+        self.subject_list.bind("<Double-Button-1>", lambda e: self._rename_subject())
 
         subject_btns = ttk.Frame(main)
         subject_btns.grid(row=3, column=0, sticky="ew", pady=4)
@@ -426,6 +446,7 @@ class TeacherFileManager(tk.Tk):
         self.lesson_list.bind("<<ListboxSelect>>", self._on_select_lesson)
         self.lesson_list.bind("<Delete>", lambda e: self._delete_lesson())
         self.lesson_list.bind("<Button-3>", self._on_lesson_right_click)
+        self.lesson_list.bind("<Double-Button-1>", lambda e: self._rename_lesson())
 
         lesson_btns = ttk.Frame(main)
         lesson_btns.grid(row=3, column=1, sticky="ew", pady=4)
@@ -734,8 +755,20 @@ class TeacherFileManager(tk.Tk):
         for idx, subject in entries:
             if filter_text and filter_text not in subject["name"].lower():
                 continue
-            self.subject_list.insert(tk.END, subject["name"])
+            label = subject["name"]
+            has_missing = any(
+                not os.path.exists(p)
+                for lesson in subject["lessons"]
+                for p in lesson["files"]
+            )
+            if has_missing:
+                label += "  ⚠"
+            self.subject_list.insert(tk.END, label)
             self._subject_display_indices.append(idx)
+            if has_missing:
+                self.subject_list.itemconfig(
+                    self.subject_list.size() - 1, foreground=self.missing_file_color
+                )
         self.lesson_list.delete(0, tk.END)
         self.file_list.delete(0, tk.END)
         self.selected_subject_idx = None
@@ -777,9 +810,15 @@ class TeacherFileManager(tk.Tk):
         self._save()
         self.subject_filter_var.set("")
         self._refresh_subjects()
-        self.subject_list.selection_set(tk.END)
-        self.subject_list.see(tk.END)
-        self._on_select_subject()
+        # Список всегда по алфавиту — новая дисциплина не обязательно
+        # окажется последней в отображении, поэтому ищем её позицию, а не
+        # просто прыгаем в конец списка.
+        new_idx = len(self.data["subjects"]) - 1
+        if new_idx in self._subject_display_indices:
+            pos = self._subject_display_indices.index(new_idx)
+            self.subject_list.selection_set(pos)
+            self.subject_list.see(pos)
+            self._on_select_subject()
 
     def _rename_subject(self):
         if self.selected_subject_idx is None:
@@ -863,8 +902,16 @@ class TeacherFileManager(tk.Tk):
         for idx, lesson in entries:
             if filter_text and filter_text not in lesson["name"].lower():
                 continue
-            self.lesson_list.insert(tk.END, lesson["name"])
+            label = lesson["name"]
+            has_missing = any(not os.path.exists(p) for p in lesson["files"])
+            if has_missing:
+                label += "  ⚠"
+            self.lesson_list.insert(tk.END, label)
             self._lesson_display_indices.append(idx)
+            if has_missing:
+                self.lesson_list.itemconfig(
+                    self.lesson_list.size() - 1, foreground=self.missing_file_color
+                )
         self._update_status()
 
     def _on_select_lesson(self, _event=None):
@@ -896,9 +943,14 @@ class TeacherFileManager(tk.Tk):
         self._save()
         self.lesson_filter_var.set("")
         self._refresh_lessons()
-        self.lesson_list.selection_set(tk.END)
-        self.lesson_list.see(tk.END)
-        self._on_select_lesson()
+        # При сортировке "А-Я" новое занятие тоже не обязательно окажется
+        # последним в отображении — та же логика, что и для дисциплин.
+        new_idx = len(subject["lessons"]) - 1
+        if new_idx in self._lesson_display_indices:
+            pos = self._lesson_display_indices.index(new_idx)
+            self.lesson_list.selection_set(pos)
+            self.lesson_list.see(pos)
+            self._on_select_lesson()
 
     def _rename_lesson(self):
         subject = self._current_subject()
@@ -1230,7 +1282,12 @@ class TeacherFileManager(tk.Tk):
         except OSError as e:
             messagebox.showerror(APP_TITLE, f"Не удалось создать папку для файлов:\n{e}")
             return
+        # normcase: пути занятия уже известны заранее — если после копирования
+        # dest совпадёт с одним из них, это не новый файл, а восстановление
+        # прежнего "не найден" на его законном месте (см. ниже).
+        known = {os.path.normcase(p) for p in lesson["files"]}
         errors = []
+        restored = 0
         for p in paths:
             dest = unique_dest_path(target_dir, os.path.basename(p))
             try:
@@ -1238,7 +1295,16 @@ class TeacherFileManager(tk.Tk):
             except OSError as e:
                 errors.append(f"{os.path.basename(p)}: {e}")
                 continue
-            lesson["files"].append(dest)
+            # unique_dest_path уклоняется только от файлов, реально лежащих
+            # на диске. Если ссылка на этот путь уже есть в занятии, но сам
+            # файл был "не найден" — значит, мы его только что восстановили
+            # копированием под тем же именем, и заводить вторую (дублирующую)
+            # ссылку на тот же файл не нужно.
+            if os.path.normcase(dest) in known:
+                restored += 1
+            else:
+                lesson["files"].append(dest)
+                known.add(os.path.normcase(dest))
         self._save()
         self.file_filter_var.set("")
         self._refresh_files()
@@ -1246,6 +1312,14 @@ class TeacherFileManager(tk.Tk):
             messagebox.showwarning(
                 APP_TITLE,
                 "Не удалось скопировать некоторые файлы:\n" + "\n".join(errors),
+            )
+        if restored:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Файл восстановлен на прежнем месте — новая ссылка не добавлена."
+                if restored == 1
+                else f"Восстановлено файлов на прежнем месте: {restored} "
+                "— новые ссылки не добавлялись.",
             )
 
     def _get_selected_file_path(self):
@@ -1321,7 +1395,7 @@ class TeacherFileManager(tk.Tk):
                 + "\n".join(errors),
             )
 
-# ------------------------------------------------------------- Утилиты --
+    # ------------------------------------------------------------- Утилиты --
     def _show_report_window(self, title, text):
         win = tk.Toplevel(self)
         win.title(title)
@@ -1348,6 +1422,13 @@ class TeacherFileManager(tk.Tk):
         ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=6)
         win.transient(self)
         win.grab_set()
+
+    def _open_help(self):
+        help_path = os.path.join(get_app_dir(), "Инструкция для капитана Щербы.txt")
+        if not os.path.isfile(help_path):
+            messagebox.showerror(APP_TITLE, f"Файл инструкции не найден:\n{help_path}")
+            return
+        open_file_external(help_path)
 
     def _check_all_files(self):
         missing = []
@@ -1379,10 +1460,19 @@ class TeacherFileManager(tk.Tk):
         if not path:
             return
         lines = [APP_TITLE, "План учебных материалов", ""]
-        for i, subject in enumerate(self.data["subjects"], 1):
-            lines.append(f"{i}. {subject['name']}")
-            for j, lesson in enumerate(subject["lessons"], 1):
-                lines.append(f"   {i}.{j} {lesson['name']}")
+        # Дисциплины и занятия нумеровать нельзя: и то, и другое сейчас
+        # выводится в алфавитном/настроенном порядке отображения, а не в
+        # порядке преподавания — цифры вида "1.2" выглядели бы как учебная
+        # последовательность, которой на самом деле нет. Поэтому просто
+        # название + маркер, без сквозной нумерации.
+        subjects_sorted = sorted(self.data["subjects"], key=lambda s: s["name"].lower())
+        for subject in subjects_sorted:
+            lines.append(subject["name"])
+            lessons = list(subject["lessons"])
+            if self.lesson_sort_mode == "alpha":
+                lessons.sort(key=lambda l: l["name"].lower())
+            for lesson in lessons:
+                lines.append(f"   • {lesson['name']}")
                 if lesson["files"]:
                     for fpath in lesson["files"]:
                         lines.append(f"        - {os.path.basename(fpath)}")
