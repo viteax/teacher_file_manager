@@ -232,12 +232,24 @@ class TeacherFileManager(tk.Tk):
         self.motto_font = tkfont.Font(family="Segoe UI", size=MOTTO_FONT_SIZE, weight="bold")
 
         self._build_ui()
+        new_subjects, new_lessons = self._discover_new_subjects_and_lessons()
         added_total, added_details = self._scan_all_lessons_for_new_files()
-        if added_total:
+        if new_subjects or new_lessons or added_total:
             self._save()
-            lines = [f"Найдено и добавлено новых файлов из папок: {added_total}.\n"]
-            for subj_name, lesson_name, count in added_details:
-                lines.append(f"«{subj_name}» → «{lesson_name}»: {count}")
+            lines = []
+            if new_subjects:
+                lines.append(
+                    "Новые дисциплины из папок: " + ", ".join(f"«{n}»" for n in new_subjects)
+                )
+            if new_lessons:
+                lines.append(
+                    "Новые занятия из папок: "
+                    + ", ".join(f"«{s}» → «{l}»" for s, l in new_lessons)
+                )
+            if added_total:
+                lines.append(f"Найдено и добавлено новых файлов из папок: {added_total}.")
+                for subj_name, lesson_name, count in added_details:
+                    lines.append(f"«{subj_name}» → «{lesson_name}»: {count}")
             self._startup_scan_message = "\n".join(lines)
         else:
             self._startup_scan_message = None
@@ -462,9 +474,6 @@ class TeacherFileManager(tk.Tk):
         ttk.Button(file_btns, text="Добавить файл...", command=self._add_file).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
-        ttk.Button(
-            file_btns, text="Обновить из папки", command=self._refresh_current_lesson_from_folder
-        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(file_btns, text="Открыть", command=self._open_selected_file).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
@@ -691,9 +700,6 @@ class TeacherFileManager(tk.Tk):
 
         menu = self._make_context_menu()
         menu.add_command(label="Добавить файл...", command=self._add_file)
-        menu.add_command(
-            label="Обновить из папки", command=self._refresh_current_lesson_from_folder
-        )
         if idx is not None:
             menu.add_command(label="Открыть", command=self._open_selected_file)
             menu.add_command(label="Показать в папке", command=self._reveal_selected_file)
@@ -1162,20 +1168,50 @@ class TeacherFileManager(tk.Tk):
                     details.append((subject["name"], lesson["name"], added))
         return total, details
 
-    def _refresh_current_lesson_from_folder(self):
-        subject = self._current_subject()
-        lesson = self._current_lesson()
-        if lesson is None:
-            messagebox.showinfo(APP_TITLE, "Сначала выберите занятие.")
-            return
-        added = self._scan_lesson_folder_for_new_files(subject, lesson)
-        if not added:
-            messagebox.showinfo(APP_TITLE, "Новых файлов в папке занятия не найдено.")
-            return
-        self._save()
-        self.file_filter_var.set("")
-        self._refresh_files()
-        messagebox.showinfo(APP_TITLE, f"Добавлено новых файлов: {added}.")
+    def _discover_new_subjects_and_lessons(self):
+        """Обнаруживает в "Материалы" папки дисциплин и занятий, которых
+        ещё нет в базе (созданы вручную через проводник, а не кнопками
+        "Добавить"), и заводит для них записи — имя берётся из имени
+        папки. Отдельно от _scan_lesson_folder_for_new_files, который
+        находит только новые файлы внутри уже известных занятий: этот
+        метод должен отработать раньше него, чтобы у новых занятий уже
+        было куда добавлять найденные файлы. Возвращает (новые дисциплины,
+        новые занятия как (дисциплина, занятие)) для сводки при старте."""
+        if not os.path.isdir(MATERIALS_PATH):
+            return [], []
+        new_subjects = []
+        new_lessons = []
+        by_sanitized_subject = {
+            sanitize_name_for_path(s["name"]).lower(): s for s in self.data["subjects"]
+        }
+        for subj_entry in sorted(os.listdir(MATERIALS_PATH)):
+            subj_dir = os.path.join(MATERIALS_PATH, subj_entry)
+            if not os.path.isdir(subj_dir):
+                continue
+            subject = by_sanitized_subject.get(subj_entry.lower())
+            if subject is None:
+                if self._subject_name_exists(subj_entry):
+                    continue  # имя занято, только регистр папки отличается — не плодим дубль
+                subject = {"name": subj_entry, "lessons": []}
+                self.data["subjects"].append(subject)
+                by_sanitized_subject[subj_entry.lower()] = subject
+                new_subjects.append(subj_entry)
+            by_sanitized_lesson = {
+                sanitize_name_for_path(l["name"]).lower(): l for l in subject["lessons"]
+            }
+            for lesson_entry in sorted(os.listdir(subj_dir)):
+                lesson_dir = os.path.join(subj_dir, lesson_entry)
+                if not os.path.isdir(lesson_dir):
+                    continue
+                lesson = by_sanitized_lesson.get(lesson_entry.lower())
+                if lesson is None:
+                    if self._lesson_name_exists(subject, lesson_entry):
+                        continue
+                    lesson = {"name": lesson_entry, "files": []}
+                    subject["lessons"].append(lesson)
+                    by_sanitized_lesson[lesson_entry.lower()] = lesson
+                    new_lessons.append((subject["name"], lesson_entry))
+        return new_subjects, new_lessons
 
     def _add_file(self):
         subject = self._current_subject()
