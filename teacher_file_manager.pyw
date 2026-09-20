@@ -38,6 +38,7 @@
 Разработано: Viktor Iptyshev (aka Viteax, iptvik)
 """
 
+from collections import deque
 import copy
 import json
 import os
@@ -60,6 +61,7 @@ MAX_FONT_SIZE = 18
 TITLE_FONT_SIZE = 18  # заголовок и девиз в шапке — не меняются кнопками A-/A+
 IGNORED_FILENAMES = {"thumbs.db", "desktop.ini"}  # системный мусор Windows-проводника
 MOTTO_FONT_SIZE = 16
+MAX_UNDO_STEPS = 20  # чтобы история отмены не росла бесконечно за долгую сессию
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 # Обе темы используют один и тот же движок отрисовки ttk — "clam"
@@ -224,8 +226,7 @@ class TeacherFileManager(tk.Tk):
         self._subject_display_indices = []
         self._lesson_display_indices = []
         self._file_display_indices = []
-        self._undo_snapshot = None
-        self._undo_trash_moves = []
+        self._undo_stack = deque(maxlen=MAX_UNDO_STEPS)
         self._trash_count = 0
         self._trash_size = 0
 
@@ -248,7 +249,7 @@ class TeacherFileManager(tk.Tk):
         new_subjects, new_lessons = self._discover_new_subjects_and_lessons()
         added_total, added_details = self._scan_all_lessons_for_new_files()
         if new_subjects or new_lessons or added_total:
-            self._save()
+            save_data(self.data)  # находки автоскана не должны попадать в историю отмены
             lines = []
             if new_subjects:
                 lines.append(
@@ -524,7 +525,7 @@ class TeacherFileManager(tk.Tk):
         self.status_label = ttk.Label(status, textvariable=self.status_var)
         self.status_label.pack(side=tk.LEFT)
         self.undo_btn = ttk.Button(
-            status, text="Отменить удаление (Ctrl+Z)", command=self._undo
+            status, text="Отменить (Ctrl+Z)", command=self._undo
         )
         self.undo_btn.pack(side=tk.RIGHT)
         self.undo_btn.state(["disabled"])
@@ -593,51 +594,72 @@ class TeacherFileManager(tk.Tk):
         self.theme_btn.configure(text="☀ Светлая" if theme_name == "dark" else "🌙 Тёмная")
 
     # --------------------------------------------------------- Служебное --
-    def _save(self):
-        """Обычное сохранение данных — используется для всех изменений,
-        КРОМЕ удаления (см. _delete_subject/_delete_lesson/_remove_file):
-        любое новое действие делает отмену предыдущего удаления невозможной,
-        поэтому заодно гасим кнопку "Отменить"."""
-        self._clear_undo()
-        save_data(self.data)
-
-    def _clear_undo(self):
-        if self._undo_snapshot is not None:
-            self._undo_snapshot = None
-            # Файлы, уже уехавшие в "Корзина" под это удаление, там и
-            # остаются навсегда (это же корзина, а не буфер отмены) — сюда
-            # просто перестаём их отслеживать для Ctrl+Z.
-            self._undo_trash_moves = []
-            self._update_undo_button()
+    def _push_undo(self):
+        """Снимает копию self.data ДО текущего изменения и кладёт на стек
+        отмены (звать в начале мутирующего действия, пока self.data ещё не
+        тронута). Возвращает сам добавленный шаг — вызывающий может
+        дозаполнить его folder_renames/created_paths/trash_restores, если
+        действию есть что откатывать ещё и на диске, а не только в JSON.
+        Стек ограничен MAX_UNDO_STEPS — самые старые шаги просто забываются,
+        отдельно чистить его не нужно (в отличие от прежней однослотовой
+        отмены, новое действие больше не обнуляет предыдущую историю)."""
+        step = {
+            "data": copy.deepcopy(self.data),
+            "folder_renames": [],  # [(текущая_папка, куда_вернуть)] — os.rename при отмене
+            "created_paths": [],  # файлы, созданные этим действием — удалить при отмене
+            "trash_restores": [],  # [(было, уехало_в_корзину)] — вернуть shutil.move при отмене
+        }
+        self._undo_stack.append(step)
+        self._update_undo_button()
+        return step
 
     def _update_undo_button(self):
-        if self._undo_snapshot is None:
-            self.undo_btn.state(["disabled"])
-        else:
+        if self._undo_stack:
             self.undo_btn.state(["!disabled"])
+        else:
+            self.undo_btn.state(["disabled"])
 
     def _undo(self, event=None):
-        if self._undo_snapshot is None:
+        if not self._undo_stack:
             return
-        self.data = self._undo_snapshot
-        self._undo_snapshot = None
-        restore_errors = []
-        for old_path, trashed_path in self._undo_trash_moves:
+        step = self._undo_stack.pop()
+        errors = []
+        for current_dir, revert_dir in step["folder_renames"]:
+            try:
+                if os.path.isdir(current_dir):
+                    os.makedirs(os.path.dirname(revert_dir), exist_ok=True)
+                    os.rename(current_dir, revert_dir)
+            except OSError:
+                errors.append(os.path.basename(current_dir))
+        touched_dirs = set()
+        for path in step["created_paths"]:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                    touched_dirs.add(os.path.dirname(path))
+            except OSError:
+                errors.append(os.path.basename(path))
+        for d in touched_dirs:
+            try:
+                if os.path.isdir(d) and not os.listdir(d):
+                    os.rmdir(d)
+            except OSError:
+                pass  # не пусто или занято — не страшно, просто не убираем
+        for old_path, trashed_path in step["trash_restores"]:
             try:
                 os.makedirs(os.path.dirname(old_path), exist_ok=True)
                 shutil.move(trashed_path, old_path)
             except OSError:
-                restore_errors.append(os.path.basename(trashed_path))
-        self._undo_trash_moves = []
+                errors.append(os.path.basename(trashed_path))
+        self.data = step["data"]
         save_data(self.data)
         self._compute_trash_stats()
         self._refresh_subjects()
         self._update_undo_button()
-        if restore_errors:
+        if errors:
             messagebox.showwarning(
                 APP_TITLE,
-                "Запись восстановлена, но не удалось вернуть из «Корзина» файл(ы):\n"
-                + "\n".join(restore_errors),
+                "Отменено, но не всё удалось откатить на диске:\n" + "\n".join(errors),
             )
 
     def _focus_search(self, event=None):
@@ -843,8 +865,9 @@ class TeacherFileManager(tk.Tk):
         if self._subject_name_exists(name):
             messagebox.showerror(APP_TITLE, f"Дисциплина «{name}» уже есть в списке.")
             return
+        self._push_undo()
         self.data["subjects"].append({"name": name, "lessons": []})
-        self._save()
+        save_data(self.data)
         self.subject_filter_var.set("")
         self._refresh_subjects()
         # Список всегда по алфавиту — новая дисциплина не обязательно
@@ -872,9 +895,12 @@ class TeacherFileManager(tk.Tk):
             messagebox.showerror(APP_TITLE, f"Дисциплина «{name}» уже есть в списке.")
             return
         old_dir = self._subject_materials_dir(subject)
+        step = self._push_undo()
         subject["name"] = name
-        self._rename_materials_folder(old_dir, self._subject_materials_dir(subject))
-        self._save()
+        new_dir = self._subject_materials_dir(subject)
+        if self._rename_materials_folder(old_dir, new_dir):
+            step["folder_renames"].append((new_dir, old_dir))
+        save_data(self.data)
         self._refresh_subjects_keep_selection()
 
     def _delete_subject(self):
@@ -889,7 +915,7 @@ class TeacherFileManager(tk.Tk):
             "действие можно отменить — Ctrl+Z)".format(subject["name"]),
         ):
             return
-        self._undo_snapshot = copy.deepcopy(self.data)
+        step = self._push_undo()
         subject_lesson_ids = {id(l) for l in subject["lessons"]}
         moves = []
         trash_errors = []
@@ -899,7 +925,7 @@ class TeacherFileManager(tk.Tk):
             )
             moves.extend(lesson_moves)
             trash_errors.extend(lesson_errors)
-        self._undo_trash_moves = moves
+        step["trash_restores"] = moves
         subject_dir = self._subject_materials_dir(subject)
         try:
             if os.path.isdir(subject_dir) and not os.listdir(subject_dir):
@@ -977,8 +1003,9 @@ class TeacherFileManager(tk.Tk):
         if self._lesson_name_exists(subject, name):
             messagebox.showerror(APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине.")
             return
+        self._push_undo()
         subject["lessons"].append({"name": name, "files": []})
-        self._save()
+        save_data(self.data)
         self.lesson_filter_var.set("")
         self._refresh_lessons()
         # При сортировке "А-Я" новое занятие тоже не обязательно окажется
@@ -1009,9 +1036,12 @@ class TeacherFileManager(tk.Tk):
             messagebox.showerror(APP_TITLE, f"Занятие «{name}» уже есть в этой дисциплине.")
             return
         old_dir = self._lesson_materials_dir(subject, lesson)
+        step = self._push_undo()
         lesson["name"] = name
-        self._rename_materials_folder(old_dir, self._lesson_materials_dir(subject, lesson))
-        self._save()
+        new_dir = self._lesson_materials_dir(subject, lesson)
+        if self._rename_materials_folder(old_dir, new_dir):
+            step["folder_renames"].append((new_dir, old_dir))
+        save_data(self.data)
         idx = self.selected_lesson_idx
         self._refresh_lessons()
         if idx is not None and idx in self._lesson_display_indices:
@@ -1033,8 +1063,9 @@ class TeacherFileManager(tk.Tk):
         new_idx = idx + delta
         if new_idx < 0 or new_idx >= len(lessons):
             return
+        self._push_undo()
         lessons[idx], lessons[new_idx] = lessons[new_idx], lessons[idx]
-        self._save()
+        save_data(self.data)
         self._refresh_lessons()
         if new_idx in self._lesson_display_indices:
             pos = self._lesson_display_indices.index(new_idx)
@@ -1056,8 +1087,8 @@ class TeacherFileManager(tk.Tk):
             "действие можно отменить — Ctrl+Z)".format(lesson["name"]),
         ):
             return
-        self._undo_snapshot = copy.deepcopy(self.data)
-        self._undo_trash_moves, trash_errors = self._move_lesson_files_to_trash(subject, lesson)
+        step = self._push_undo()
+        step["trash_restores"], trash_errors = self._move_lesson_files_to_trash(subject, lesson)
         del subject["lessons"][self.selected_lesson_idx]
         save_data(self.data)
         self._compute_trash_stats()
@@ -1192,11 +1223,13 @@ class TeacherFileManager(tk.Tk):
         """Переименовывает папку old_dir -> new_dir на диске (если она уже
         существует) и обновляет пути ко всем файлам во всей базе, у которых
         был этот префикс пути — включая занятия-дубликаты, которые могут
-        ссылаться на файлы внутри этой же папки."""
+        ссылаться на файлы внутри этой же папки. Возвращает True, если
+        папка физически переименована (это нужно вызывающему для истории
+        отмены — знать, что при Ctrl+Z придётся переименовать её обратно)."""
         if old_dir is None or new_dir is None or old_dir == new_dir:
-            return
+            return False
         if not os.path.isdir(old_dir):
-            return  # папка ещё не создавалась (файлов не добавляли) — нечего переименовывать
+            return False  # папка ещё не создавалась (файлов не добавляли) — нечего переименовывать
         try:
             os.makedirs(os.path.dirname(new_dir), exist_ok=True)
             os.rename(old_dir, new_dir)
@@ -1206,7 +1239,7 @@ class TeacherFileManager(tk.Tk):
                 "Название изменено, но не удалось переименовать папку с "
                 f"файлами на диске:\n{e}\n\nПуть в проводнике остался старым.",
             )
-            return
+            return False
         # Обязательно с разделителем на конце префикса: без него, скажем,
         # переименование "Урок 1" задело бы и файлы "Урок 10" (совпадение
         # по началу строки, но это разные папки).
@@ -1219,6 +1252,7 @@ class TeacherFileManager(tk.Tk):
                     else p
                     for p in lesson["files"]
                 ]
+        return True
 
     def _scan_lesson_folder_for_new_files(self, subject, lesson):
         """Сравнивает папку занятия на диске со списком файлов в data.json и
@@ -1325,8 +1359,10 @@ class TeacherFileManager(tk.Tk):
         # dest совпадёт с одним из них, это не новый файл, а восстановление
         # прежнего "не найден" на его законном месте (см. ниже).
         known = {os.path.normcase(p) for p in lesson["files"]}
+        step = self._push_undo()
         errors = []
         restored = 0
+        created_paths = []
         for p in paths:
             dest = unique_dest_path(target_dir, os.path.basename(p))
             try:
@@ -1334,6 +1370,7 @@ class TeacherFileManager(tk.Tk):
             except OSError as e:
                 errors.append(f"{os.path.basename(p)}: {e}")
                 continue
+            created_paths.append(dest)
             # unique_dest_path уклоняется только от файлов, реально лежащих
             # на диске. Если ссылка на этот путь уже есть в занятии, но сам
             # файл был "не найден" — значит, мы его только что восстановили
@@ -1344,7 +1381,14 @@ class TeacherFileManager(tk.Tk):
             else:
                 lesson["files"].append(dest)
                 known.add(os.path.normcase(dest))
-        self._save()
+        if created_paths:
+            step["created_paths"] = created_paths
+        else:
+            # ничего реально не изменилось (всё копирование провалилось) —
+            # не засорять историю отмены пустым шагом
+            self._undo_stack.pop()
+            self._update_undo_button()
+        save_data(self.data)
         self.file_filter_var.set("")
         self._refresh_files()
         if errors:
@@ -1410,7 +1454,7 @@ class TeacherFileManager(tk.Tk):
             "внешние ссылки на файлы затронуты не будут; действие можно отменить — Ctrl+Z)",
         ):
             return
-        self._undo_snapshot = copy.deepcopy(self.data)
+        step = self._push_undo()
         actual_indices = [self._file_display_indices[i] for i in sel]
         trash_moves = []
         errors = []
@@ -1423,7 +1467,7 @@ class TeacherFileManager(tk.Tk):
             if status == "moved":
                 trash_moves.append(move)
             del lesson["files"][idx]
-        self._undo_trash_moves = trash_moves
+        step["trash_restores"] = trash_moves
         save_data(self.data)
         self._compute_trash_stats()
         self._update_undo_button()
