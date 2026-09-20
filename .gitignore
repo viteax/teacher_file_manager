@@ -16,3 +16,6 @@ __pycache__/
 # Мусор Windows-проводника
 Thumbs.db
 desktop.ini
+
+# Личные настройки редактора
+/.vscode/
