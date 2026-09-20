@@ -222,9 +222,6 @@ class TeacherFileManager(tk.Tk):
         self.theme_name = self.data["settings"].get("theme", "light")
         if self.theme_name not in THEMES:
             self.theme_name = "light"
-        self.subject_sort_mode = self.data["settings"].get("subject_sort_mode", "custom")
-        if self.subject_sort_mode not in ("custom", "alpha"):
-            self.subject_sort_mode = "custom"
         self.lesson_sort_mode = self.data["settings"].get("lesson_sort_mode", "custom")
         if self.lesson_sort_mode not in ("custom", "alpha"):
             self.lesson_sort_mode = "custom"
@@ -261,7 +258,6 @@ class TeacherFileManager(tk.Tk):
         settings = self.data.setdefault("settings", {})
         settings["font_size"] = self.font_size
         settings["theme"] = self.theme_name
-        settings["subject_sort_mode"] = self.subject_sort_mode
         settings["lesson_sort_mode"] = self.lesson_sort_mode
         save_data(self.data)
         self.destroy()
@@ -377,10 +373,6 @@ class TeacherFileManager(tk.Tk):
         subject_search_row.grid(row=1, column=0, sticky="ew", padx=(0, 6), pady=(2, 2))
         self.subject_filter_entry = ttk.Entry(subject_search_row, textvariable=self.subject_filter_var)
         self.subject_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.subject_sort_btn = ttk.Button(
-            subject_search_row, text="А-Я", width=6, command=self._toggle_subject_sort
-        )
-        self.subject_sort_btn.pack(side=tk.LEFT, padx=(4, 0))
         self.subject_list = tk.Listbox(
             main, exportselection=False, activestyle="dotbox", font=self.ui_font
         )
@@ -400,14 +392,6 @@ class TeacherFileManager(tk.Tk):
         ttk.Button(subject_btns, text="Удалить", command=self._delete_subject).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
-        self.subject_up_btn = ttk.Button(
-            subject_btns, text="▲", width=3, command=lambda: self._move_subject(-1)
-        )
-        self.subject_up_btn.pack(side=tk.LEFT, padx=2)
-        self.subject_down_btn = ttk.Button(
-            subject_btns, text="▼", width=3, command=lambda: self._move_subject(1)
-        )
-        self.subject_down_btn.pack(side=tk.LEFT, padx=2)
 
         # --- Column 2: Lessons -------------------------------------------------
         ttk.Label(main, text="Тема/Занятие", font=self.ui_font_bold).grid(
@@ -502,16 +486,8 @@ class TeacherFileManager(tk.Tk):
         self.undo_btn.pack(side=tk.RIGHT)
         self.undo_btn.state(["disabled"])
 
-        self._update_subject_sort_ui()
         self._update_lesson_sort_ui()
         self._apply_theme(self.theme_name)
-
-    def _toggle_subject_sort(self):
-        self.subject_sort_mode = "alpha" if self.subject_sort_mode == "custom" else "custom"
-        self.data["settings"]["subject_sort_mode"] = self.subject_sort_mode
-        save_data(self.data)
-        self._update_subject_sort_ui()
-        self._refresh_subjects()
 
     def _toggle_lesson_sort(self):
         self.lesson_sort_mode = "alpha" if self.lesson_sort_mode == "custom" else "custom"
@@ -519,13 +495,6 @@ class TeacherFileManager(tk.Tk):
         save_data(self.data)
         self._update_lesson_sort_ui()
         self._refresh_lessons()
-
-    def _update_subject_sort_ui(self):
-        alpha = self.subject_sort_mode == "alpha"
-        self.subject_sort_btn.configure(text="Свой" if alpha else "А-Я")
-        state = ["disabled"] if alpha else ["!disabled"]
-        self.subject_up_btn.state(state)
-        self.subject_down_btn.state(state)
 
     def _update_lesson_sort_ui(self):
         alpha = self.lesson_sort_mode == "alpha"
@@ -682,18 +651,6 @@ class TeacherFileManager(tk.Tk):
         if idx is not None:
             menu.add_command(label="Переименовать", command=self._rename_subject)
             menu.add_command(label="Удалить", command=self._delete_subject)
-            menu.add_separator()
-            move_state = tk.DISABLED if self.subject_sort_mode == "alpha" else tk.NORMAL
-            menu.add_command(
-                label="Переместить вверх",
-                command=lambda: self._move_subject(-1),
-                state=move_state,
-            )
-            menu.add_command(
-                label="Переместить вниз",
-                command=lambda: self._move_subject(1),
-                state=move_state,
-            )
         self._popup_menu(menu, event)
 
     def _on_lesson_right_click(self, event):
@@ -767,8 +724,7 @@ class TeacherFileManager(tk.Tk):
         self.subject_list.delete(0, tk.END)
         self._subject_display_indices = []
         entries = list(enumerate(self.data["subjects"]))
-        if self.subject_sort_mode == "alpha":
-            entries.sort(key=lambda pair: pair[1]["name"].lower())
+        entries.sort(key=lambda pair: pair[1]["name"].lower())
         for idx, subject in entries:
             if filter_text and filter_text not in subject["name"].lower():
                 continue
@@ -818,22 +774,6 @@ class TeacherFileManager(tk.Tk):
         self.subject_list.selection_set(tk.END)
         self.subject_list.see(tk.END)
         self._on_select_subject()
-
-    def _move_subject(self, delta):
-        if self.subject_sort_mode == "alpha":
-            return  # ручная перестановка не имеет смысла в алфавитном виде
-        idx = self.selected_subject_idx
-        if idx is None:
-            messagebox.showinfo(APP_TITLE, "Сначала выберите дисциплину.")
-            return
-        subjects = self.data["subjects"]
-        new_idx = idx + delta
-        if new_idx < 0 or new_idx >= len(subjects):
-            return
-        subjects[idx], subjects[new_idx] = subjects[new_idx], subjects[idx]
-        self._save()
-        self.selected_subject_idx = new_idx
-        self._refresh_subjects_keep_selection()
 
     def _rename_subject(self):
         if self.selected_subject_idx is None:
