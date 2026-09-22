@@ -252,13 +252,19 @@ class TeacherFileManager(tk.Tk):
         )
 
         self._build_ui()
+        relocated_fixed = self._repair_relocated_managed_paths()
         new_subjects, new_lessons = self._discover_new_subjects_and_lessons()
         added_total, added_details = self._scan_all_lessons_for_new_files()
-        if new_subjects or new_lessons or added_total:
+        if relocated_fixed or new_subjects or new_lessons or added_total:
             save_data(
                 self.data
             )  # находки автоскана не должны попадать в историю отмены
             lines = []
+            if relocated_fixed:
+                lines.append(
+                    f"Обновлены ссылки на файлы после переноса программы: "
+                    f"{relocated_fixed}."
+                )
             if new_subjects:
                 lines.append(
                     "Новые дисциплины из папок: "
@@ -1332,6 +1338,66 @@ class TeacherFileManager(tk.Tk):
                     total += added
                     details.append((subject["name"], lesson["name"], added))
         return total, details
+
+    def _relocated_managed_copy_basename(self, subject, lesson, path):
+        """Если структура path похожа на управляемую копию ЭТОГО ЖЕ занятия
+        — заканчивается на .../Материалы/<эта дисциплина>/<это занятие>/
+        <файл> — но, возможно, под другим корневым путём (всю программу
+        скопировали или перенесли в другое место, и путь в data.json
+        остался привязан к старому расположению), возвращает имя файла.
+        Иначе — None (это либо уже нормальный текущий путь, либо вообще
+        не управляемая копия, а внешняя ссылка)."""
+        parts = os.path.normpath(path).split(os.sep)
+        if len(parts) < 4:
+            return None
+        expected = [
+            MATERIALS_DIRNAME,
+            sanitize_name_for_path(subject["name"]),
+            sanitize_name_for_path(lesson["name"]),
+        ]
+        tail = parts[-4:-1]
+        if [t.lower() for t in tail] == [e.lower() for e in expected]:
+            return parts[-1]
+        return None
+
+    def _repair_relocated_managed_paths(self):
+        """Если всю программу скопировали или перенесли в другую папку/на
+        другой диск, старые пути в data.json остаются привязаны к прежнему
+        расположению — новый и старый путь для одного и того же файла
+        выглядят как два разных файла, и автоскан плодит дубли (реальный
+        случай: перенос из репозитория в отдельную тестовую папку). Эта
+        проверка идёт ПЕРЕД автосканом и приводит такие "переехавшие"
+        ссылки к актуальному месту (текущий MATERIALS_PATH) — но только
+        если файл там на самом деле есть, иначе оставляет как было (чтобы
+        не терять ссылку, если файл ещё не скопирован на новое место).
+        Заодно убирает получившиеся точные дубликаты внутри занятия.
+        Возвращает число исправленных/убранных ссылок — для сводки при
+        старте."""
+        fixed = 0
+        for subject in self.data["subjects"]:
+            for lesson in subject["lessons"]:
+                new_files = []
+                seen = set()
+                for path in lesson["files"]:
+                    basename = self._relocated_managed_copy_basename(
+                        subject, lesson, path
+                    )
+                    if basename is not None:
+                        canonical = os.path.join(
+                            self._lesson_materials_dir(subject, lesson), basename
+                        )
+                        if os.path.normcase(canonical) != os.path.normcase(
+                            path
+                        ) and os.path.isfile(canonical):
+                            path = canonical
+                            fixed += 1
+                    key = os.path.normcase(path)
+                    if key in seen:
+                        continue  # точный дубликат — например, canonical уже был в списке
+                    seen.add(key)
+                    new_files.append(path)
+                lesson["files"] = new_files
+        return fixed
 
     def _discover_new_subjects_and_lessons(self):
         """Обнаруживает в "Материалы" папки дисциплин и занятий, которых

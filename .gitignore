@@ -12,6 +12,7 @@ data.json.bak
 # Python
 __pycache__/
 *.pyc
+.coverage
 
 # Мусор Windows-проводника
 Thumbs.db

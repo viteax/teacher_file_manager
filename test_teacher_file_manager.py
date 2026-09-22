@@ -13,13 +13,21 @@
 Как запустить (нужен рабочий Tk-дисплей — то есть локально на Windows,
 не в headless CI):
     python -m unittest test_teacher_file_manager -v
+Для отчёта о покрытии:
+    python -m coverage run -m unittest test_teacher_file_manager
+    python -m coverage report -m
 
-Изоляция: каждый тест копирует teacher_file_manager.pyw во ВРЕМЕННУЮ папку
-(через tempfile.mkdtemp, вне этого репозитория) и импортирует его оттуда.
-Поскольку DATA_PATH/MATERIALS_PATH/TRASH_PATH внутри программы считаются
-через get_app_dir() -> __file__, весь тест работает со своей изолированной
-копией и никогда не трогает реальный data.json/Материалы/Корзина рядом с
-программой. Временная папка удаляется после каждого теста.
+Изоляция: модуль программы импортируется НАПРЯМУЮ из репозитория (не из
+копии — иначе coverage.py не может сопоставить выполненные строки с
+настоящим файлом и честно показывает 0%). Вместо копирования файла на
+каждый тест подменяются сами константы DATA_PATH/MATERIALS_PATH/TRASH_PATH
+— это единственные пути, куда программа что-либо пишет, — на свежую
+временную папку (tempfile.mkdtemp, вне этого репозитория). get_app_dir()
+и всё, что через неё читается только на чтение (иконка, эмблема,
+инструкция), по-прежнему смотрит в реальный проект — это безопасно, эти
+файлы программа не трогает. Временная папка удаляется после каждого теста;
+реальный data.json/Материалы/Корзина рядом с программой не затрагиваются
+никогда.
 """
 import importlib.util
 import json
@@ -31,32 +39,26 @@ import unittest
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_SOURCE = os.path.join(PROJECT_DIR, "teacher_file_manager.pyw")
-ASSETS_SOURCE = os.path.join(PROJECT_DIR, "assets")
-HELP_SOURCE = os.path.join(PROJECT_DIR, "Инструкция для капитана Щербы.txt")
 
 _counter = 0
 
 
 def _load_app_module(work_dir):
-    """Копирует программу (+ assets, + инструкцию) в work_dir и
-    импортирует её оттуда, чтобы get_app_dir() резолвился внутрь work_dir."""
+    """Импортирует teacher_file_manager.pyw напрямую из репозитория (чтобы
+    coverage.py видел настоящий файл) и подменяет DATA_PATH/MATERIALS_PATH/
+    TRASH_PATH так, чтобы вся запись шла в изолированную work_dir, а не в
+    реальный проект. Каждый вызов создаёт свежий экземпляр модуля под
+    уникальным именем в sys.modules, чтобы тесты не делили состояние."""
     global _counter
     _counter += 1
-    dest = os.path.join(work_dir, "teacher_file_manager.pyw")
-    shutil.copyfile(APP_SOURCE, dest)
-    if os.path.isdir(ASSETS_SOURCE):
-        shutil.copytree(ASSETS_SOURCE, os.path.join(work_dir, "assets"))
-    if os.path.isfile(HELP_SOURCE):
-        shutil.copyfile(
-            HELP_SOURCE, os.path.join(work_dir, "Инструкция для капитана Щербы.txt")
-        )
     module_name = f"tfm_under_test_{_counter}"
-    spec = importlib.util.spec_from_file_location(module_name, dest)
+    spec = importlib.util.spec_from_file_location(module_name, APP_SOURCE)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
-    if module.get_app_dir() != work_dir:
-        raise AssertionError("изоляция теста не сработала — это баг в самом тесте")
+    module.DATA_PATH = os.path.join(work_dir, "data.json")
+    module.MATERIALS_PATH = os.path.join(work_dir, "Материалы")
+    module.TRASH_PATH = os.path.join(work_dir, "Корзина")
     return module
 
 
@@ -191,6 +193,93 @@ class AutoDiscoveryTest(AppTestCase):
         added = app._scan_lesson_folder_for_new_files(subject, lesson)
         self.assertEqual(added, 0)
         self.assertEqual(lesson["files"], [])
+
+
+class RelocatedInstallTest(unittest.TestCase):
+    """2026-09-22: реальный случай — скопировали всю папку программы в
+    другое место (например, из репозитория в отдельную тестовую папку) для
+    проверки перед выдачей преподавателю. Старые абсолютные пути в
+    data.json остаются привязаны к прежнему расположению; без починки
+    автоскан находит те же файлы по новому пути и заводит вторые,
+    дублирующие ссылки, ничего не убирая. Использует _load_app_module
+    напрямую (не через AppTestCase) — нужны ДВЕ независимые "установки"
+    с разными MATERIALS_PATH одновременно."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="tfm_test_relocate_")
+        self.old_dir = os.path.join(self.base, "old")
+        self.new_dir = os.path.join(self.base, "new")
+        self.app = None
+
+    def tearDown(self):
+        if self.app is not None:
+            self.app.destroy()
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_relocating_whole_install_does_not_duplicate_files(self):
+        lesson_dir = os.path.join(self.old_dir, "Материалы", "Тема", "Занятие")
+        os.makedirs(lesson_dir)
+        old_path = os.path.join(lesson_dir, "lecture.txt")
+        with open(old_path, "w", encoding="utf-8") as f:
+            f.write("content")
+        data = {
+            "subjects": [
+                {"name": "Тема", "lessons": [{"name": "Занятие", "files": [old_path]}]}
+            ],
+            "settings": {},
+        }
+        with open(os.path.join(self.old_dir, "data.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        # Копируем ВСЮ папку old -> new, как пользователь вручную через
+        # проводник (перенос/копирование программы на новое место).
+        shutil.copytree(self.old_dir, self.new_dir)
+
+        tfm_new = _load_app_module(self.new_dir)
+        tfm_new.messagebox.showinfo = lambda *a, **k: None
+        tfm_new.messagebox.showwarning = lambda *a, **k: None
+        self.app = tfm_new.TeacherFileManager()
+        self.app.update_idletasks()
+
+        lesson = self.app.data["subjects"][0]["lessons"][0]
+        self.assertEqual(
+            len(lesson["files"]),
+            1,
+            f"BUG: файл задвоился после переноса: {lesson['files']}",
+        )
+        new_path = lesson["files"][0]
+        self.assertNotEqual(new_path, old_path)
+        self.assertTrue(os.path.isfile(new_path))
+        self.assertIn("Обновлены ссылки", self.app._startup_scan_message or "")
+
+    def test_relocation_repair_is_idempotent_on_second_launch(self):
+        """Второй запуск из того же (уже нового) места не должен снова
+        считать уже исправленную ссылку "переехавшей"."""
+        lesson_dir = os.path.join(self.new_dir, "Материалы", "Тема", "Занятие")
+        os.makedirs(lesson_dir)
+        current_path = os.path.join(lesson_dir, "lecture.txt")
+        with open(current_path, "w", encoding="utf-8") as f:
+            f.write("content")
+        data = {
+            "subjects": [
+                {
+                    "name": "Тема",
+                    "lessons": [{"name": "Занятие", "files": [current_path]}],
+                }
+            ],
+            "settings": {},
+        }
+        with open(os.path.join(self.new_dir, "data.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        tfm = _load_app_module(self.new_dir)
+        tfm.messagebox.showinfo = lambda *a, **k: None
+        self.app = tfm.TeacherFileManager()
+        self.app.update_idletasks()
+
+        lesson = self.app.data["subjects"][0]["lessons"][0]
+        self.assertEqual(lesson["files"], [current_path])
+        self.assertIsNone(self.app._startup_scan_message)
 
 
 class SelectionAfterAddTest(AppTestCase):
